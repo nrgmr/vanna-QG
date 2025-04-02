@@ -1042,25 +1042,25 @@ class VannaFlaskAPI:
             """
 
             if self.allow_llm_to_see_data:
-                followup_questions = vn.generate_followup_questions(
-                    question=question, sql=sql, df=df
-                )
-                if followup_questions is not None and len(followup_questions) > 5:
-                    followup_questions = followup_questions[:5]
+                # followup_questions = vn.generate_followup_questions(
+                #     question=question, sql=sql, df=df
+                # )
+                # if followup_questions is not None and len(followup_questions) > 5:
+                #     followup_questions = followup_questions[:5]
 
-                self.cache.set(
-                    user=user,
-                    id=id,
-                    field="followup_questions",
-                    value=followup_questions,
-                )
+                # self.cache.set(
+                #     user=user,
+                #     id=id,
+                #     field="followup_questions",
+                #     value=followup_questions,
+                # )
 
                 return jsonify(
                     {
                         "type": "question_list",
                         "id": id,
-                        "questions": followup_questions,
-                        "header": "Here are some potential followup questions:",
+                        "questions": [],
+                        "header": "Wonderful! Click 'New Question' to begin a fresh analysis.",
                     }
                 )
             else:
