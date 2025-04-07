@@ -1,22 +1,21 @@
+import importlib.metadata
 import json
 import logging
 import os
 import sys
-import uuid
 import threading
+import uuid
 from abc import ABC, abstractmethod
 from functools import wraps
-import importlib.metadata
 
 import flask
 import requests
+from constants import TOKEN_LIMIT_REACHED_MESSAGE
 from flasgger import Swagger
 from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_sock import Sock
-
 from training_data_addition import train_new_data
 from utils import token_limit_check
-from constants import TOKEN_LIMIT_REACHED_MESSAGE
 
 from ..base import VannaBase
 from .assets import css_content, html_content, js_content
@@ -116,7 +115,7 @@ class MemoryCache(Cache):
         return self.cache[user][id][field]
 
     def get_order(self, user):
-      return self.cache[user]["order"]
+        return self.cache[user]["order"]
 
     def get_all(self, user, field_list) -> list:
         if user in self.cache:
@@ -138,6 +137,7 @@ class MemoryCache(Cache):
         if user in self.cache:
             if id in self.cache[user]:
                 del self.cache[user][id]
+
 
 class VannaFlaskAPI:
     flask_app = None
@@ -348,7 +348,7 @@ class VannaFlaskAPI:
                         "header": "Here are some questions you can ask",
                     }
                 )
-            except Exception as e:
+            except Exception:
                 return jsonify(
                     {
                         "type": "question_list",
@@ -607,7 +607,10 @@ class VannaFlaskAPI:
             try:
                 if not vn.run_sql_is_set:
                     current_order = self.cache.get_order(user=user)
-                    if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                    if (
+                        current_order[-1]["step"] == "answer"
+                        and current_order[-1]["id"] == id
+                    ):
                         return jsonify(
                             {
                                 "type": "error",
@@ -622,12 +625,17 @@ class VannaFlaskAPI:
                 self.cache.set(user=user, id=id, field="df", value=df)
 
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify(
                         {
                             "type": "df",
                             "id": id,
-                            "df": df.head(10).to_json(orient="records", date_format="iso"),
+                            "df": df.head(10).to_json(
+                                orient="records", date_format="iso"
+                            ),
                             "should_generate_chart": self.chart
                             and vn.should_generate_chart(df),
                         }
@@ -637,7 +645,10 @@ class VannaFlaskAPI:
 
             except Exception as e:
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify({"type": "sql_error", "error": str(e)})
 
                 return jsonify()
@@ -678,19 +689,23 @@ class VannaFlaskAPI:
             if error is None:
                 return jsonify({"type": "error", "error": "No error provided"})
 
-            question = f"I have an error: {error}\n\nHere is the SQL I tried to run: {sql}\n\nThis is the question I was trying to answer: {question}\n\nCan you rewrite the SQL to fix the error?"
+            attempts = self.cache.get(user=user, id=id, field="fix_attempts") or 0
+            attempts += 1
+            self.cache.set(user=user, id=id, field="fix_attempts", value=attempts)
 
+            question = f"I have an error: {error}\n\nHere is the SQL I tried to run: {sql}\n\nThis is the question I was trying to answer: {question}\n\nCan you rewrite the SQL to fix the error?"
             fixed_sql = vn.generate_sql(question=question)
 
-            self.cache.set(user=user, id=id, field="sql", value=fixed_sql)
-
-            return jsonify(
-                {
-                    "type": "sql",
-                    "id": id,
-                    "text": fixed_sql,
-                }
-            )
+            try:
+                vn.run_sql(fixed_sql)
+                self.cache.set(user=user, id=id, field="sql", value=fixed_sql)
+                self.cache.set(user=user, id=id, field="fix_attempts", value=0)
+                return jsonify({"type": "sql", "id": id, "text": fixed_sql})
+            except Exception:
+                if attempts >= 3:
+                    return jsonify({"type": "error", "id": id, "error": error})
+                else:
+                    return fix_sql(user, id, question, fixed_sql)
 
         @self.flask_app.route("/api/v0/update_sql", methods=["POST"])
         @self.requires_auth
@@ -1107,7 +1122,10 @@ class VannaFlaskAPI:
                 )
 
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify(
                         {
                             "type": "question_list",
@@ -1122,7 +1140,10 @@ class VannaFlaskAPI:
                 self.cache.set(user=user, id=id, field="followup_questions", value=[])
 
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify(
                         {
                             "type": "question_list",
@@ -1167,18 +1188,23 @@ class VannaFlaskAPI:
                 token_overflow = token_limit_check(tokens)
 
                 if token_overflow["over_token_limit"]:
-                    return jsonify({
+                    return jsonify(
+                        {
                             "type": "error",
                             "id": id,
                             "error": TOKEN_LIMIT_REACHED_MESSAGE,
-                        })
+                        }
+                    )
 
                 summary = vn.generate_summary(question=question, df=df)
 
                 self.cache.set(user=user, id=id, field="summary", value=summary)
 
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify(
                         {
                             "type": "text",
@@ -1190,7 +1216,10 @@ class VannaFlaskAPI:
                 return jsonify()
             else:
                 current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                if (
+                    current_order[-1]["step"] == "answer"
+                    and current_order[-1]["id"] == id
+                ):
                     return jsonify(
                         {
                             "type": "text",
