@@ -1042,6 +1042,7 @@ class VannaFlaskAPI:
             """
 
             if self.allow_llm_to_see_data:
+                # Disabling this feature for now
                 # followup_questions = vn.generate_followup_questions(
                 #     question=question, sql=sql, df=df
                 # )
