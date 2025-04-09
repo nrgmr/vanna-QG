@@ -15,8 +15,6 @@ from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_sock import Sock
 
 from training_data_addition import train_new_data
-from utils import token_limit_check
-from constants import TOKEN_LIMIT_REACHED_MESSAGE
 
 from ..base import VannaBase
 from .assets import css_content, html_content, js_content
@@ -43,13 +41,6 @@ class Cache(ABC):
         pass
 
     @abstractmethod
-    def get_order(self, user):
-        """
-        Get order from the cache. Returns object where id == "order" on a per user basis.
-        """
-        pass
-
-    @abstractmethod
     def get_all(self, user, field_list) -> list:
         """
         Get all values from the cache.
@@ -60,13 +51,6 @@ class Cache(ABC):
     def set(self, user, id, field, value):
         """
         Set a value in the cache.
-        """
-        pass
-
-    @abstractmethod
-    def append_order(self, user, id, step):
-        """
-        Append an order value in the cache for id == "order".
         """
         pass
 
@@ -94,15 +78,6 @@ class MemoryCache(Cache):
 
         self.cache[user][id][field] = value
 
-    def append_order(self, user, id, step):
-        if user not in self.cache:
-            self.cache[user] = {}
-
-        if "order" not in self.cache[user]:
-            self.cache[user]["order"] = []
-
-        self.cache[user]["order"].append({"id": id, "step": step})
-
     def get(self, user, id, field):
         if user not in self.cache:
             return None
@@ -114,9 +89,6 @@ class MemoryCache(Cache):
             return None
 
         return self.cache[user][id][field]
-
-    def get_order(self, user):
-      return self.cache[user]["order"]
 
     def get_all(self, user, field_list) -> list:
         if user in self.cache:
@@ -134,10 +106,17 @@ class MemoryCache(Cache):
 
         return []
 
+    # def get_all(self, user, field_list) -> list:
+    #     return [
+    #         {"id": id, **{field: self.get(user=user, id=id, field=field) for field in field_list}}
+    #         for id in self.cache
+    #     ]
+
     def delete(self, user, id):
         if user in self.cache:
             if id in self.cache[user]:
                 del self.cache[user][id]
+
 
 class VannaFlaskAPI:
     flask_app = None
@@ -385,16 +364,10 @@ class VannaFlaskAPI:
             """
             question = flask.request.args.get("question")
 
-            id = self.cache.generate_id(question=question)
-            self.cache.append_order(user=user, id=id, step="sql")
-
             if question is None:
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "sql" and current_order[-1]["id"] == id:
-                    return jsonify({"type": "error", "error": "No question provided"})
+                return jsonify({"type": "error", "error": "No question provided"})
 
-                return jsonify()
-
+            id = self.cache.generate_id(question=question)
             sql = vn.generate_sql(
                 question=question, allow_llm_to_see_data=self.allow_llm_to_see_data
             )
@@ -407,27 +380,22 @@ class VannaFlaskAPI:
             self.cache.set(user=user, id=id, field="sql", value=sql)
             self.cache.set(user=user, id=id, field="sql_summary", value=full_summary)
 
-            current_order = self.cache.get_order(user=user)
-            if current_order[-1]["step"] == "sql" and current_order[-1]["id"] == id:
-                if vn.is_sql_valid(sql=sql):
-                    self.cache.append_order(user=user, id=id, step="answer")
-                    return jsonify(
-                        {
-                            "type": "sql",
-                            "id": id,
-                            "text": full_summary,
-                        }
-                    )
-                else:
-                    return jsonify(
-                        {
-                            "type": "text",
-                            "id": id,
-                            "text": sql,
-                        }
-                    )
-
-            return jsonify()
+            if vn.is_sql_valid(sql=sql):
+                return jsonify(
+                    {
+                        "type": "sql",
+                        "id": id,
+                        "text": full_summary,
+                    }
+                )
+            else:
+                return jsonify(
+                    {
+                        "type": "text",
+                        "id": id,
+                        "text": sql,
+                    }
+                )
 
         @self.flask_app.route("/api/v0/generate_rewritten_question", methods=["GET"])
         @self.requires_auth
@@ -446,8 +414,6 @@ class VannaFlaskAPI:
                 required: true
             """
 
-            id = self.cache.generate_id()
-
             last_question = flask.request.args.get("last_question")
             new_question = flask.request.args.get("new_question")
 
@@ -455,14 +421,9 @@ class VannaFlaskAPI:
                 last_question, new_question
             )
 
-            current_order = self.cache.get_order(user=user)
-            if current_order[-1]["step"] == "answer":
-                self.cache.append_order(user=user, id=id, step="sql")
-                return jsonify(
-                    {"type": "rewritten_question", "question": rewritten_question}
-                )
-
-            return jsonify()
+            return jsonify(
+                {"type": "rewritten_question", "question": rewritten_question}
+            )
 
         @self.flask_app.route("/api/v0/get_function", methods=["GET"])
         @self.requires_auth
@@ -606,41 +567,29 @@ class VannaFlaskAPI:
             """
             try:
                 if not vn.run_sql_is_set:
-                    current_order = self.cache.get_order(user=user)
-                    if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                        return jsonify(
-                            {
-                                "type": "error",
-                                "error": "Please connect to a database using vn.connect_to_... in order to run SQL queries.",
-                            }
-                        )
-
-                    return jsonify()
+                    return jsonify(
+                        {
+                            "type": "error",
+                            "error": "Please connect to a database using vn.connect_to_... in order to run SQL queries.",
+                        }
+                    )
 
                 df = vn.run_sql(sql=sql)
 
                 self.cache.set(user=user, id=id, field="df", value=df)
 
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify(
-                        {
-                            "type": "df",
-                            "id": id,
-                            "df": df.head(10).to_json(orient="records", date_format="iso"),
-                            "should_generate_chart": self.chart
-                            and vn.should_generate_chart(df),
-                        }
-                    )
-
-                return jsonify()
+                return jsonify(
+                    {
+                        "type": "df",
+                        "id": id,
+                        "df": df.head(10).to_json(orient="records", date_format="iso"),
+                        "should_generate_chart": self.chart
+                        and vn.should_generate_chart(df),
+                    }
+                )
 
             except Exception as e:
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify({"type": "sql_error", "error": str(e)})
-
-                return jsonify()
+                return jsonify({"type": "sql_error", "error": str(e)})
 
         @self.flask_app.route("/api/v0/fix_sql", methods=["POST"])
         @self.requires_auth
@@ -1092,36 +1041,38 @@ class VannaFlaskAPI:
                       type: string
             """
 
-            if self.allow_llm_to_see_data:
-                # Disabling this feature for now
-                # followup_questions = vn.generate_followup_questions(
-                #     question=question, sql=sql, df=df
-                # )
-                # if followup_questions is not None and len(followup_questions) > 5:
-                #     followup_questions = followup_questions[:5]
+            if self.allow_llm_to_see_data and self.config['followup_questions']:
+                followup_questions = vn.generate_followup_questions(
+                    question=question, sql=sql, df=df
+                )
+                if followup_questions is not None and len(followup_questions) > 5:
+                    followup_questions = followup_questions[:5]
 
-                # self.cache.set(
-                #     user=user,
-                #     id=id,
-                #     field="followup_questions",
-                #     value=followup_questions,
-                # )
+                self.cache.set(
+                    user=user,
+                    id=id,
+                    field="followup_questions",
+                    value=followup_questions,
+                )
 
+                return jsonify(
+                    {
+                        "type": "question_list",
+                        "id": id,
+                        "questions": followup_questions,
+                        "header": "Here are some potential followup questions:",
+                    }
+                )
             else:
                 self.cache.set(user=user, id=id, field="followup_questions", value=[])
-
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify(
-                        {
-                            "type": "question_list",
-                            "id": id,
-                            "questions": [],
-                            "header": "Followup Questions can be enabled if you set allow_llm_to_see_data=True",
-                        }
-                    )
-
-                return jsonify()
+                return jsonify(
+                    {
+                        "type": "question_list",
+                        "id": id,
+                        "questions": [],
+                        "header": "Wonderful! Click 'New Question' to begin a fresh analysis.",
+                    }
+                )
 
         @self.flask_app.route("/api/v0/generate_summary", methods=["GET"])
         @self.requires_auth
@@ -1150,45 +1101,26 @@ class VannaFlaskAPI:
                     text:
                       type: string
             """
-
             if self.allow_llm_to_see_data:
-                tokens = vn.str_to_approx_token_count(df.to_string(index=False))
-                token_overflow = token_limit_check(tokens)
-
-                if token_overflow["over_token_limit"]:
-                    return jsonify({
-                            "type": "error",
-                            "id": id,
-                            "error": TOKEN_LIMIT_REACHED_MESSAGE,
-                        })
-
                 summary = vn.generate_summary(question=question, df=df)
 
                 self.cache.set(user=user, id=id, field="summary", value=summary)
 
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify(
-                        {
-                            "type": "text",
-                            "id": id,
-                            "text": summary,
-                        }
-                    )
-
-                return jsonify()
+                return jsonify(
+                    {
+                        "type": "text",
+                        "id": id,
+                        "text": summary,
+                    }
+                )
             else:
-                current_order = self.cache.get_order(user=user)
-                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify(
-                        {
-                            "type": "text",
-                            "id": id,
-                            "text": "Summarization can be enabled if you set allow_llm_to_see_data=True",
-                        }
-                    )
-
-                return jsonify()
+                return jsonify(
+                    {
+                        "type": "text",
+                        "id": id,
+                        "text": "Summarization can be enabled if you set allow_llm_to_see_data=True",
+                    }
+                )
 
         @self.flask_app.route("/api/v0/load_question", methods=["GET"])
         @self.requires_auth
@@ -1270,16 +1202,10 @@ class VannaFlaskAPI:
                       items:
                         type: string
             """
-            id = self.cache.generate_id()
-            self.cache.append_order(user=user, id=id, step="questions")
-
-            questions = cache.get_all(user=user, field_list=["question"])
-            filtered_questions = [i for i in questions if i.get("id") != "order"]
-
             return jsonify(
                 {
                     "type": "question_history",
-                    "questions": filtered_questions,
+                    "questions": cache.get_all(user=user, field_list=["question"]),
                 }
             )
 
