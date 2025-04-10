@@ -64,11 +64,8 @@ import plotly.graph_objects as go
 import requests
 import sqlparse
 
-from utils import token_limit_check
-from constants import TOKEN_LIMIT_REACHED_MESSAGE
-
 from ..exceptions import DependencyError, ImproperlyConfigured, ValidationError
-from ..types import TrainingPlan, TrainingPlanItem, TableMetadata
+from ..types import TrainingPlan, TrainingPlanItem
 from ..utils import validate_config_path
 
 
@@ -213,54 +210,6 @@ class VannaBase(ABC):
 
         return llm_response
 
-    def extract_table_metadata(ddl: str) -> TableMetadata:
-      """
-        Example:
-        ```python
-        vn.extract_table_metadata("CREATE TABLE hive.bi_ads.customers (id INT, name TEXT, sales DECIMAL)")
-        ```
-
-        Extracts the table metadata from a DDL statement. This is useful in case the DDL statement contains other information besides the table metadata.
-        Override this function if your DDL statements need custom extraction logic.
-
-        Args:
-            ddl (str): The DDL statement.
-
-        Returns:
-            TableMetadata: The extracted table metadata.
-        """
-      pattern_with_catalog_schema = re.compile(
-        r'CREATE TABLE\s+(\w+)\.(\w+)\.(\w+)\s*\(',
-        re.IGNORECASE
-      )
-      pattern_with_schema = re.compile(
-        r'CREATE TABLE\s+(\w+)\.(\w+)\s*\(',
-        re.IGNORECASE
-      )
-      pattern_with_table = re.compile(
-        r'CREATE TABLE\s+(\w+)\s*\(',
-        re.IGNORECASE
-      )
-
-      match_with_catalog_schema = pattern_with_catalog_schema.search(ddl)
-      match_with_schema = pattern_with_schema.search(ddl)
-      match_with_table = pattern_with_table.search(ddl)
-
-      if match_with_catalog_schema:
-        catalog = match_with_catalog_schema.group(1)
-        schema = match_with_catalog_schema.group(2)
-        table_name = match_with_catalog_schema.group(3)
-        return TableMetadata(catalog, schema, table_name)
-      elif match_with_schema:
-        schema = match_with_schema.group(1)
-        table_name = match_with_schema.group(2)
-        return TableMetadata(None, schema, table_name)
-      elif match_with_table:
-        table_name = match_with_table.group(1)
-        return TableMetadata(None, None, table_name)
-      else:
-        return TableMetadata()
-
     def is_sql_valid(self, sql: str) -> bool:
         """
         Example:
@@ -328,20 +277,8 @@ class VannaBase(ABC):
             return new_question
 
         prompt = [
-            self.system_message("""Your task is to analyze the user's new question in relation to their previous question and determine if it is a follow-up question or a standalone query. Follow these guidelines:
-
-1. If the new question is self-contained and doesn't require context from the previous question, return it unchanged.
-
-2. If the new question is a follow-up or related to the previous question, rewrite it to include relevant context from the previous question. The rewritten question should be comprehensive enough to be understood and answered without needing to refer back to the previous question.
-
-3. Focus on maintaining the specific intent and constraints of the new question while incorporating necessary context.
-
-4. Ensure the rewritten question can theoretically be answered with a single SQL statement.
-
-5. Return only the rewritten question or the original new question if no rewrite is needed. Do not include any explanations or additional text.
-
-6. Pay attention to time periods, entities, or other specific parameters mentioned in both questions that might need to be substituted, combined, and/or clarified in the rewritten question."""),
-            self.user_message("Previous question: " + last_question + "\nNew question: " + new_question),
+            self.system_message("Your goal is to combine a sequence of questions into a singular question if they are related. If the second question does not relate to the first question and is fully self-contained, return the second question. Return just the new combined question with no additional explanations. The question should theoretically be answerable with a single SQL statement."),
+            self.user_message("First question: " + last_question + "\nSecond question: " + new_question),
         ]
 
         return self.submit_prompt(prompt=prompt, **kwargs)
@@ -369,19 +306,13 @@ class VannaBase(ABC):
 
         message_log = [
             self.system_message(
-                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe SQL query for this question was: {sql}\n\nThe following is a pandas DataFrame with the results of the query: \n{df.head(500).to_markdown()}\n\n"
+                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe SQL query for this question was: {sql}\n\nThe following is a pandas DataFrame with the results of the query: \n{df.head(25).to_markdown()}\n\n"
             ),
             self.user_message(
                 f"Generate a list of {n_questions} followup questions that the user might ask about this data. Respond with a list of questions, one per line. Do not answer with any explanations -- just the questions. Remember that there should be an unambiguous SQL query that can be generated from the question. Prefer questions that are answerable outside of the context of this conversation. Prefer questions that are slight modifications of the SQL query that was generated that allow digging deeper into the data. Each question will be turned into a button that the user can click to generate a new SQL query so don't use 'example' type questions. Each question must have a one-to-one correspondence with an instantiated SQL query." +
                 self._response_language()
             ),
         ]
-
-        tokens = self.str_to_approx_token_count(str(message_log))
-        token_overflow = token_limit_check(tokens)
-
-        if token_overflow["over_token_limit"]:
-            return TOKEN_LIMIT_REACHED_MESSAGE
 
         llm_response = self.submit_prompt(message_log, **kwargs)
 
@@ -420,18 +351,13 @@ class VannaBase(ABC):
 
         message_log = [
             self.system_message(
-                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe following is a pandas DataFrame with the results of the query: \n{df.head(500).to_markdown()}\n\n"
+                f"You are a helpful data assistant. The user asked the question: '{question}'\n\nThe following is a pandas DataFrame with the results of the query: \n{df.to_markdown()}\n\n"
             ),
             self.user_message(
                 "Briefly summarize the data based on the question that was asked. Do not respond with any additional explanation beyond the summary." +
                 self._response_language()
             ),
         ]
-        tokens = self.str_to_approx_token_count(str(message_log))
-        token_overflow = token_limit_check(tokens)
-
-        if token_overflow["over_token_limit"]:
-            return TOKEN_LIMIT_REACHED_MESSAGE
 
         summary = self.submit_prompt(message_log, **kwargs)
 
@@ -470,31 +396,6 @@ class VannaBase(ABC):
         pass
 
     @abstractmethod
-    def search_tables_metadata(self,
-                              engine: str = None,
-                              catalog: str = None,
-                              schema: str = None,
-                              table_name: str = None,
-                              ddl: str = None,
-                              size: int = 10,
-                              **kwargs) -> list:
-        """
-        This method is used to get similar tables metadata.
-
-        Args:
-            engine (str): The database engine.
-            catalog (str): The catalog.
-            schema (str): The schema.
-            table_name (str): The table name.
-            ddl (str): The DDL statement.
-            size (int): The number of tables to return.
-
-        Returns:
-            list: A list of tables metadata.
-        """
-        pass
-
-    @abstractmethod
     def get_related_documentation(self, question: str, **kwargs) -> list:
         """
         This method is used to get related documentation to a question.
@@ -522,13 +423,12 @@ class VannaBase(ABC):
         pass
 
     @abstractmethod
-    def add_ddl(self, ddl: str, engine: str = None, **kwargs) -> str:
+    def add_ddl(self, ddl: str, **kwargs) -> str:
         """
         This method is used to add a DDL statement to the training data.
 
         Args:
             ddl (str): The DDL statement to add.
-            engine (str): The database engine that the DDL statement applies to.
 
         Returns:
             str: The ID of the training data that was added.
@@ -789,6 +689,9 @@ class VannaBase(ABC):
         return response
 
     def _extract_python_code(self, markdown_string: str) -> str:
+        # Strip whitespace to avoid indentation errors in LLM-generated code
+        markdown_string = markdown_string.strip()
+
         # Regex pattern to match Python code blocks
         pattern = r"```[\w\s]*python\n([\s\S]*?)```|```([\s\S]*?)```"
 
@@ -1878,7 +1781,6 @@ class VannaBase(ABC):
         question: str = None,
         sql: str = None,
         ddl: str = None,
-        engine: str = None,
         documentation: str = None,
         plan: TrainingPlan = None,
     ) -> str:
@@ -1899,11 +1801,8 @@ class VannaBase(ABC):
             question (str): The question to train on.
             sql (str): The SQL query to train on.
             ddl (str):  The DDL statement.
-            engine (str): The database engine.
             documentation (str): The documentation to train on.
             plan (TrainingPlan): The training plan to train on.
-        Returns:
-            str: The training pl
         """
 
         if question and not sql:
@@ -1921,12 +1820,12 @@ class VannaBase(ABC):
 
         if ddl:
             print("Adding ddl:", ddl)
-            return self.add_ddl(ddl=ddl, engine=engine)
+            return self.add_ddl(ddl)
 
         if plan:
             for item in plan._plan:
                 if item.item_type == TrainingPlanItem.ITEM_TYPE_DDL:
-                    self.add_ddl(ddl=item.item_value, engine=engine)
+                    self.add_ddl(item.item_value)
                 elif item.item_type == TrainingPlanItem.ITEM_TYPE_IS:
                     self.add_documentation(item.item_value)
                 elif item.item_type == TrainingPlanItem.ITEM_TYPE_SQL:
