@@ -415,6 +415,7 @@ class VannaFlaskAPI:
                     if vn.is_sql_valid(sql=sql):
 
                         self.cache.append_order(user=user, id=id, step="answer")
+
                         return jsonify(
                             {
                                 "type": "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "sql",
@@ -423,7 +424,6 @@ class VannaFlaskAPI:
                             }
                         )
 
-                    # Vanna does not allow a "type" of value "error" to be returned here, will always display "error" for "text" value.
                     return jsonify(
                         {
                             "type": "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "text",
@@ -718,7 +718,6 @@ class VannaFlaskAPI:
 
               self.cache.set(user=user, id=id, field="sql", value=fixed_sql)
 
-              # Vanna does not allow a "type" of value "error" to be returned here, will always display "error" for "text" value.
               return jsonify(
                   {
                       "type": "error" if fixed_sql == TOKEN_LIMIT_REACHED_MESSAGE else "sql",
@@ -1155,6 +1154,7 @@ class VannaFlaskAPI:
 
                     current_order = self.cache.get_order(user=user)
                     if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+
                         return jsonify(
                             {
                                 "type": "error" if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else "question_list",
@@ -1233,6 +1233,7 @@ class VannaFlaskAPI:
 
                     current_order = self.cache.get_order(user=user)
                     if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+
                         return jsonify(
                             {
                                 "type": "error" if summary == TOKEN_LIMIT_REACHED_MESSAGE else "text",
