@@ -721,6 +721,7 @@ class VannaFlaskAPI:
 
               self.cache.set(user=user, id=id, field="sql", value=fixed_sql)
 
+              # Vanna does not allow a "type" of value "error" to be returned here, will always display "error" for "text" value.
               return jsonify(
                   {
                       "type": "error" if fixed_sql == TOKEN_LIMIT_REACHED_MESSAGE else "sql",
