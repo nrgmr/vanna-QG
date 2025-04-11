@@ -589,7 +589,8 @@ class VannaFlaskAPI:
                 )
 
             except Exception as e:
-                return jsonify({"type": "sql_error", "error": str(e)})
+              message = vn.explain_error(error_message=str(e), sql_query=sql)
+              return jsonify({"type": "sql_error", "error": message})
 
         @self.flask_app.route("/api/v0/fix_sql", methods=["POST"])
         @self.requires_auth
