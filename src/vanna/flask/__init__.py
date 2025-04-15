@@ -307,6 +307,7 @@ class VannaFlaskAPI:
             """
             # If self has an _model attribute and model=='chinook'
             if hasattr(self.vn, "_model") and self.vn._model == "chinook":
+
                 return jsonify(
                     {
                         "type": "question_list",
