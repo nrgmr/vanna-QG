@@ -649,14 +649,12 @@ class VannaFlaskAPI:
                 return jsonify()
 
             except HTTPError as e:
-                print("FLASK HTTPError", e)
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
                   return jsonify({"type": "error", "error": str(e)})
 
                 return jsonify()
             except Exception as e:
-                print("FLASK Exception", e)
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
                     return jsonify({"type": "sql_error", "error": str(e)})
