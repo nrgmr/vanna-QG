@@ -631,7 +631,6 @@ class VannaFlaskAPI:
                     return jsonify()
 
                 df = vn.run_sql(sql=sql)
-                print("DFDFDFDFDDFFDF", df)
 
                 self.cache.set(user=user, id=id, field="df", value=df)
 
