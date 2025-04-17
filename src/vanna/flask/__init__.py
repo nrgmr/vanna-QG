@@ -628,7 +628,19 @@ class VannaFlaskAPI:
                     return jsonify()
 
                 df = vn.run_sql(sql=sql)
-
+                df_clean = df.dropna(how="all")
+                only_zero_or_na = (df_clean.fillna(0) == 0).all(axis=1).all()
+                is_effectively_empty = df_clean.empty or only_zero_or_na
+                if df.empty or is_effectively_empty:
+                  current_order = self.cache.get_order(user=user)
+                  if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                    error_message = (
+                        "No luck with that query! It might be that the data"
+                        "does not exist for your filters, or something is off like a typo or invalid date." 
+                        "Try revising, or give the data team a shout at datasciences@nrgmr.com."
+                    )
+                    return jsonify({"type": "error", "error": error_message})
+                  
                 self.cache.set(user=user, id=id, field="df", value=df)
 
                 current_order = self.cache.get_order(user=user)
@@ -654,7 +666,8 @@ class VannaFlaskAPI:
             except Exception as e:
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify({"type": "sql_error", "error": str(e)})
+                    error_message = vn.explain_error(str(e), sql)
+                    return jsonify({"type": "sql_error", "error": error_message})
 
                 return jsonify()
 
