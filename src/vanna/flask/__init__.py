@@ -645,6 +645,7 @@ class VannaFlaskAPI:
                             and vn.should_generate_chart(df),
                         }
                     )
+
                 return jsonify()
 
             except HTTPError as e:
