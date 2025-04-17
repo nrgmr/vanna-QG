@@ -651,15 +651,16 @@ class VannaFlaskAPI:
 
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                  return jsonify(
-                      {
-                          "type": "df",
-                          "id": id,
-                          "df": df.head(10).to_json(orient="records", date_format="iso"),
-                          "should_generate_chart": self.chart
-                          and vn.should_generate_chart(df),
-                      }
-                  )
+                    return jsonify(
+                        {
+                            "type": "df",
+                            "id": id,
+                            "df": df.head(10).to_json(orient="records", date_format="iso"),
+                            "should_generate_chart": self.chart
+                            and vn.should_generate_chart(df),
+                        }
+                    )
+                return jsonify()
 
             except HTTPError as e:
                 current_order = self.cache.get_order(user=user)
