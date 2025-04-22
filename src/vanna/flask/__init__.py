@@ -44,6 +44,13 @@ class Cache(ABC):
         pass
 
     @abstractmethod
+    def get_order(self, user):
+        """
+        Get order from the cache. Returns object where id == "order" on a per user basis.
+        """
+        pass
+
+    @abstractmethod
     def get_all(self, user, field_list) -> list:
         """
         Get all values from the cache.
@@ -54,6 +61,13 @@ class Cache(ABC):
     def set(self, user, id, field, value):
         """
         Set a value in the cache.
+        """
+        pass
+
+    @abstractmethod
+    def append_order(self, user, id, step):
+        """
+        Append an order value in the cache for id == "order".
         """
         pass
 
@@ -81,6 +95,15 @@ class MemoryCache(Cache):
 
         self.cache[user][id][field] = value
 
+    def append_order(self, user, id, step):
+        if user not in self.cache:
+            self.cache[user] = {}
+
+        if "order" not in self.cache[user]:
+            self.cache[user]["order"] = []
+
+        self.cache[user]["order"].append({"id": id, "step": step})
+
     def get(self, user, id, field):
         if user not in self.cache:
             return None
@@ -92,6 +115,9 @@ class MemoryCache(Cache):
             return None
 
         return self.cache[user][id][field]
+
+    def get_order(self, user):
+        return self.cache[user]["order"]
 
     def get_all(self, user, field_list) -> list:
         if user in self.cache:
@@ -108,12 +134,6 @@ class MemoryCache(Cache):
             ]
 
         return []
-
-    # def get_all(self, user, field_list) -> list:
-    #     return [
-    #         {"id": id, **{field: self.get(user=user, id=id, field=field) for field in field_list}}
-    #         for id in self.cache
-    #     ]
 
     def delete(self, user, id):
         if user in self.cache:
@@ -606,10 +626,14 @@ class VannaFlaskAPI:
 
                     return jsonify()
 
+                # Run SQL query
                 df = vn.run_sql(sql=sql)
+                # Clean DF to determine if its truly empty
                 df_clean = df.dropna(how="all")
                 only_zero_or_na = (df_clean.fillna(0) == 0).all(axis=1).all()
+                # Assign empty flag
                 is_effectively_empty = df_clean.empty or only_zero_or_na
+                # Check if DF is empty
                 if df.empty or is_effectively_empty:
                   current_order = self.cache.get_order(user=user)
                   if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
@@ -624,15 +648,16 @@ class VannaFlaskAPI:
 
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    return jsonify(
-                        {
-                            "type": "error",
-                            "error": "Please connect to a database using vn.connect_to_... in order to run SQL queries.",
-                        }
-                    )
-
-                df = vn.run_sql(sql=sql)
-
+                  return jsonify(
+                      {
+                          "type": "df",
+                          "id": id,
+                          "df": df.head(10).to_json(orient="records", date_format="iso"),
+                          "should_generate_chart": self.chart
+                          and vn.should_generate_chart(df),
+                      }
+                  )
+                
             except HTTPError as e:
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
@@ -645,19 +670,7 @@ class VannaFlaskAPI:
                     error_message = vn.explain_error(str(e), sql)
                     return jsonify({"type": "sql_error", "error": error_message})
 
-                return jsonify(
-                    {
-                        "type": "df",
-                        "id": id,
-                        "df": df.head(10).to_json(orient="records", date_format="iso"),
-                        "should_generate_chart": self.chart
-                        and vn.should_generate_chart(df),
-                    }
-                )
-
-            except Exception as e:
-              message = vn.explain_error(error_message=str(e), sql_query=sql)
-              return jsonify({"type": "sql_error", "error": message})
+                return jsonify()
 
         @self.flask_app.route("/api/v0/fix_sql", methods=["POST"])
         @self.requires_auth
