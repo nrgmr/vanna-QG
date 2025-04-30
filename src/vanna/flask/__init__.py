@@ -641,7 +641,7 @@ class VannaFlaskAPI:
                   current_order = self.cache.get_order(user=user)
                   if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
                     error_message = (
-                        "No luck with that query! It might be that the data"
+                        "No luck with that query! It might be that the data "
                         "does not exist for your filters, or something is off like a typo or invalid date."
                         "Try revising, or give the data team a shout at datasciences@nrgmr.com."
                     )
