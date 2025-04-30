@@ -672,7 +672,8 @@ class VannaFlaskAPI:
             except Exception as e:
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                    error_message = vn.explain_error(str(e), sql)
+                    error_explaination = vn.explain_error(str(e), sql)
+                    error_message = f"{str(e)}\n\n{error_explaination}"
                     return jsonify({"type": "sql_error", "error": error_message})
 
                 return jsonify()
