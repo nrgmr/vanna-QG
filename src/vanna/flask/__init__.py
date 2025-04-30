@@ -308,6 +308,7 @@ class VannaFlaskAPI:
             """
             # If self has an _model attribute and model=='chinook'
             if hasattr(self.vn, "_model") and self.vn._model == "chinook":
+
                 return jsonify(
                     {
                         "type": "question_list",
@@ -405,7 +406,7 @@ class VannaFlaskAPI:
                 sql_summary = vn.generate_sql_summary(question=question, sql=sql)
                 # Style the final output to be more readable
                 full_summary = f"{sql_summary}\n\nSQL Query:\n\n{sql}"
-                
+
                 self.cache.set(user=user, id=id, field="question", value=question)
                 self.cache.set(user=user, id=id, field="sql", value=sql)
                 self.cache.set(user=user, id=id, field="sql_summary", value=full_summary)
@@ -413,22 +414,24 @@ class VannaFlaskAPI:
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "sql" and current_order[-1]["id"] == id:
                     if vn.is_sql_valid(sql=sql):
+
                         self.cache.append_order(user=user, id=id, step="answer")
+
                         return jsonify(
                             {
-                                "type": "sql",
+                                "type": "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "sql",
                                 "id": id,
-                                "text": full_summary,
+                                "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "text": TOKEN_LIMIT_REACHED_MESSAGE if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else full_summary,
                             }
                         )
-                    else:
-                        return jsonify(
-                            {
-                                "type": "text",
-                                "id": id,
-                                "text": sql,
-                            }
-                        )
+
+                    return jsonify(
+                        {
+                            "type": "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "text",
+                            "id": id,
+                            "error" if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else "text": TOKEN_LIMIT_REACHED_MESSAGE if TOKEN_LIMIT_REACHED_MESSAGE in (sql, sql_summary) else sql,
+                        }
+                    )
 
                 return jsonify()
 
@@ -639,25 +642,27 @@ class VannaFlaskAPI:
                   if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
                     error_message = (
                         "No luck with that query! It might be that the data"
-                        "does not exist for your filters, or something is off like a typo or invalid date." 
+                        "does not exist for your filters, or something is off like a typo or invalid date."
                         "Try revising, or give the data team a shout at datasciences@nrgmr.com."
                     )
                     return jsonify({"type": "error", "error": error_message})
-                  
+
                 self.cache.set(user=user, id=id, field="df", value=df)
 
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                  return jsonify(
-                      {
-                          "type": "df",
-                          "id": id,
-                          "df": df.head(10).to_json(orient="records", date_format="iso"),
-                          "should_generate_chart": self.chart
-                          and vn.should_generate_chart(df),
-                      }
-                  )
-                
+                    return jsonify(
+                        {
+                            "type": "df",
+                            "id": id,
+                            "df": df.head(10).to_json(orient="records", date_format="iso"),
+                            "should_generate_chart": self.chart
+                            and vn.should_generate_chart(df),
+                        }
+                    )
+
+                return jsonify()
+
             except HTTPError as e:
                 current_order = self.cache.get_order(user=user)
                 if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
@@ -718,9 +723,9 @@ class VannaFlaskAPI:
 
               return jsonify(
                   {
-                      "type": "sql",
+                      "type": "error" if fixed_sql == TOKEN_LIMIT_REACHED_MESSAGE else "sql",
                       "id": id,
-                      "text": fixed_sql,
+                      "error" if fixed_sql == TOKEN_LIMIT_REACHED_MESSAGE else "text": fixed_sql,
                   }
               )
 
@@ -1152,18 +1157,17 @@ class VannaFlaskAPI:
 
                     current_order = self.cache.get_order(user=user)
                     if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+
                         return jsonify(
                             {
-                                "type": "question_list",
+                                "type": "error" if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else "question_list",
                                 "id": id,
-                                "questions": followup_questions,
-                                "header": "Here are some potential followup questions:",
+                                "error" if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else "questions": followup_questions[0] if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else followup_questions,
+                                None if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else "header": None if followup_questions[0] == TOKEN_LIMIT_REACHED_MESSAGE else "Here are some potential followup questions:",
                             }
                         )
 
                     return jsonify()
-                else:
-                    self.cache.set(user=user, id=id, field="followup_questions", value=[])
 
                     current_order = self.cache.get_order(user=user)
                     if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
@@ -1175,8 +1179,20 @@ class VannaFlaskAPI:
                                 "header": "Wonderful! Click 'New Question' to begin a fresh analysis.",
                             }
                         )
+                self.cache.set(user=user, id=id, field="followup_questions", value=[])
 
-                    return jsonify()
+                current_order = self.cache.get_order(user=user)
+                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                    return jsonify(
+                        {
+                            "type": "question_list",
+                            "id": id,
+                            "questions": [],
+                            "header": "Followup Questions can be enabled if you set allow_llm_to_see_data=True",
+                        }
+                    )
+
+                return jsonify()
 
             except HTTPError as e:
                 current_order = self.cache.get_order(user=user)
@@ -1216,32 +1232,32 @@ class VannaFlaskAPI:
 
                 if self.allow_llm_to_see_data:
                     summary = vn.generate_summary(question=question, df=df)
-
                     self.cache.set(user=user, id=id, field="summary", value=summary)
 
                     current_order = self.cache.get_order(user=user)
                     if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+
                         return jsonify(
                             {
-                                "type": "text",
+                                "type": "error" if summary == TOKEN_LIMIT_REACHED_MESSAGE else "text",
                                 "id": id,
-                                "text": summary,
+                                "error" if summary == TOKEN_LIMIT_REACHED_MESSAGE else "text": summary,
                             }
                         )
 
                     return jsonify()
-                else:
-                    current_order = self.cache.get_order(user=user)
-                    if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
-                        return jsonify(
-                            {
-                                "type": "text",
-                                "id": id,
-                                "text": "Summarization can be enabled if you set allow_llm_to_see_data=True",
-                            }
-                        )
 
-                    return jsonify()
+                current_order = self.cache.get_order(user=user)
+                if current_order[-1]["step"] == "answer" and current_order[-1]["id"] == id:
+                    return jsonify(
+                        {
+                            "type": "text",
+                            "id": id,
+                            "text": "Summarization can be enabled if you set allow_llm_to_see_data=True",
+                        }
+                    )
+
+                return jsonify()
 
             except HTTPError as e:
                 current_order = self.cache.get_order(user=user)
